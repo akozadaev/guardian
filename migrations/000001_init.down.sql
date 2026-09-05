@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS request_logs;
+DROP TABLE IF EXISTS audit_logs;
+DROP TABLE IF EXISTS rules;
+DROP TABLE IF EXISTS users;

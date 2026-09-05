@@ -1,0 +1,79 @@
+server:
+  proxy_addr: ":8080"
+  admin_addr: ":8081"
+  metrics_addr: ":9090"
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 60s
+  max_conns: 10000
+  max_request_body: 10485760
+  shutdown_timeout: 30s
+  # Только эти CIDR могут передавать X-Forwarded-For / X-Real-IP
+  trusted_proxies: []
+
+proxy:
+  max_conns_per_host: 1000
+  read_timeout: 30s
+  write_timeout: 30s
+  dial_timeout: 5s
+  max_idle_conn_duration: 30s
+  dns_cache_ttl: 1h
+  dial_concurrency: 4096
+  buffer_size: 32768
+  # В рабочей среде оставьте false, чтобы блокировать SSRF-запросы к адресам RFC1918 и сервисам метаданных
+  allow_private_targets: false
+
+postgres:
+  dsn: "postgres://guardian:guardian@localhost:5432/guardian?sslmode=disable"
+  max_conns: 50
+  min_conns: 5
+  max_conn_lifetime: 1h
+  max_conn_idle_time: 30m
+  read_replica_dsn: ""
+
+redis:
+  enabled: true
+  addr: "localhost:6379"
+  password: ""
+  db: 0
+  pool_size: 100
+
+auth:
+  # ОБЯЗАТЕЛЬНО: задайте через GUARDIAN_AUTH_JWT_SECRET (минимум 16 символов, не известное значение по умолчанию)
+  jwt_secret: ""
+  jwt_issuer: "guardian"
+  token_cache_ttl: 10m
+  oauth2_enabled: false
+  oauth2_introspect_url: ""
+  oauth2_jwks_url: ""
+  require_auth_for_proxy: false
+  # Только для разработки: если задано, POST /api/v1/auth/token требует заголовок X-Bootstrap-Token
+  bootstrap_token: ""
+
+cache:
+  enabled: true
+  rules_ttl: 30s
+  response_ttl: 60s
+  auth_ttl: 10m
+  # По умолчанию выключено - включайте только для анонимных кэшируемых GET-запросов
+  response_enabled: false
+
+queue:
+  enabled: false
+  backend: "none"
+  brokers: "localhost:9092"
+  topic: "guardian-events"
+  group_id: "guardian"
+
+rate_limit:
+  enabled: true
+  default_rps: 1000
+  burst: 2000
+  per_ip_limit: 500
+  max_conns_per_ip: 100
+
+log:
+  level: "info"
+  format: "json"
+  # По умолчанию выключено: журналы запросов отправляются только в Kafka (если она включена); избегаем PG на горячем пути
+  persist_requests: false
