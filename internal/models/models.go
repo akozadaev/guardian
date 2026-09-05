@@ -175,20 +175,20 @@ type RequestLog struct {
 	CreatedAt      time.Time  `json:"created_at"`
 }
 
-// RequestContext обрабатывается механизмом фильтрации.
+// RequestContext содержит данные запроса, используемые механизмом фильтрации.
 type RequestContext struct {
-	Method      string
-	URL         string
-	Path        string
-	Query       string
-	Host        string
-	IP          string
-	Headers     map[string]string
-	Body        []byte
-	ContentType string
-	BodySize    int
-	UserID      string
-	Role        string
+	Method      string            `json:"method"`
+	URL         string            `json:"url"`
+	Path        string            `json:"path"`
+	Query       string            `json:"query"`
+	Host        string            `json:"host"`
+	IP          string            `json:"ip"`
+	Headers     map[string]string `json:"headers"`
+	Body        []byte            `json:"body"`
+	ContentType string            `json:"content_type"`
+	BodySize    int               `json:"body_size"`
+	UserID      string            `json:"user_id"`
+	Role        string            `json:"role"`
 }
 
 // TokenClaims содержит данные, полученные после проверки JWT.

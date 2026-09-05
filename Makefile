@@ -1,4 +1,4 @@
-.PHONY: build run test tidy migrate-install migrate-up migrate-down hey-install load-test docker-up docker-down lint
+.PHONY: build run test tidy generate openapi openapi-check migrate-install migrate-up migrate-down hey-install load-test docker-up docker-down lint
 
 APP=guardian
 CONFIG?=configs/config.yaml
@@ -14,6 +14,16 @@ test:
 
 tidy:
 	go mod tidy
+
+generate:
+	go generate ./...
+
+openapi:
+	go run ./cmd/openapi -output docs/openapi.yaml
+
+openapi-check:
+	go generate ./...
+	git diff --exit-code -- docs/openapi.yaml
 
 migrate-install:
 	go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest

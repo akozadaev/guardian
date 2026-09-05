@@ -109,66 +109,26 @@ func (h *Handler) audit(tc *models.TokenClaims, action, resource, ip string, det
 func (h *Handler) AdminRouter(ctx *fasthttp.RequestCtx) {
 	path := string(ctx.Path())
 	method := string(ctx.Method())
-
-	switch {
-	case path == "/health":
-		writeJSON(ctx, 200, map[string]string{"status": "ok"})
-		return
-	case path == "/ready":
-		if h.Ready != nil && !h.Ready() {
-			writeErr(ctx, 503, "not ready")
+	for _, route := range AdminRoutes() {
+		if route.Method == method && routeMatches(route.Path, path) {
+			route.handler(h, ctx)
 			return
 		}
-		writeJSON(ctx, 200, map[string]string{"status": "ready"})
-		return
-	case path == "/api/v1/auth/token" && method == fasthttp.MethodPost:
-		h.issueDevToken(ctx)
-		return
 	}
-
-	if len(path) < 8 || path[:8] != "/api/v1/" {
-		writeErr(ctx, 404, "not found")
-		return
-	}
-
-	switch {
-	case path == "/api/v1/rules" && method == fasthttp.MethodGet:
-		h.listRules(ctx)
-	case path == "/api/v1/rules" && method == fasthttp.MethodPost:
-		h.createRule(ctx)
-	case startsWith(path, "/api/v1/rules/") && endsWith(path, "/test") && method == fasthttp.MethodPost:
-		h.testRule(ctx)
-	case startsWith(path, "/api/v1/rules/") && method == fasthttp.MethodGet:
-		h.getRule(ctx)
-	case startsWith(path, "/api/v1/rules/") && method == fasthttp.MethodPut:
-		h.updateRule(ctx)
-	case startsWith(path, "/api/v1/rules/") && method == fasthttp.MethodDelete:
-		h.deleteRule(ctx)
-
-	case path == "/api/v1/users" && method == fasthttp.MethodGet:
-		h.listUsers(ctx)
-	case path == "/api/v1/users" && method == fasthttp.MethodPost:
-		h.createUser(ctx)
-	case startsWith(path, "/api/v1/users/") && method == fasthttp.MethodGet:
-		h.getUser(ctx)
-	case startsWith(path, "/api/v1/users/") && method == fasthttp.MethodPut:
-		h.updateUser(ctx)
-	case startsWith(path, "/api/v1/users/") && method == fasthttp.MethodDelete:
-		h.deleteUser(ctx)
-
-	case path == "/api/v1/stats" && method == fasthttp.MethodGet:
-		h.stats(ctx)
-	case path == "/api/v1/stats/rules" && method == fasthttp.MethodGet:
-		h.statsRules(ctx)
-	case path == "/api/v1/stats/users" && method == fasthttp.MethodGet:
-		h.statsUsers(ctx)
-	default:
-		writeErr(ctx, 404, "not found")
-	}
+	writeErr(ctx, 404, "not found")
 }
 
-func startsWith(s, p string) bool { return len(s) >= len(p) && s[:len(p)] == p }
-func endsWith(s, p string) bool   { return len(s) >= len(p) && s[len(s)-len(p):] == p }
+func (h *Handler) health(ctx *fasthttp.RequestCtx) {
+	writeJSON(ctx, 200, StatusResponse{Status: "ok"})
+}
+
+func (h *Handler) readiness(ctx *fasthttp.RequestCtx) {
+	if h.Ready != nil && !h.Ready() {
+		writeErr(ctx, 503, "not ready")
+		return
+	}
+	writeJSON(ctx, 200, StatusResponse{Status: "ready"})
+}
 
 func pathID(path, prefix string) (uuid.UUID, error) {
 	rest := path[len(prefix):]
@@ -204,9 +164,7 @@ func (h *Handler) issueDevToken(ctx *fasthttp.RequestCtx) {
 		writeErr(ctx, fasthttp.StatusUnauthorized, "unauthorized")
 		return
 	}
-	var body struct {
-		Email string `json:"email"`
-	}
+	var body TokenRequest
 	if err := json.Unmarshal(ctx.PostBody(), &body); err != nil || body.Email == "" {
 		writeErr(ctx, 400, "email required")
 		return
@@ -226,7 +184,7 @@ func (h *Handler) issueDevToken(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	h.audit(nil, "auth.bootstrap_token", u.ID.String(), h.clientIP(ctx), map[string]string{"email": u.Email})
-	writeJSON(ctx, 200, map[string]string{"access_token": tok, "token_type": "Bearer"})
+	writeJSON(ctx, 200, TokenResponse{AccessToken: tok, TokenType: "Bearer"})
 }
 
 func (h *Handler) listRules(ctx *fasthttp.RequestCtx) {
