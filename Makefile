@@ -1,7 +1,11 @@
-.PHONY: build run test tidy generate openapi openapi-check migrate-install migrate-up migrate-down hey-install load-test docker-up docker-down lint
+.PHONY: build run test tidy generate openapi openapi-check migrate-install migrate-up migrate-down hey-install load-test docker-up docker-down docker-monitoring lint lint-install
 
 APP=guardian
 CONFIG?=configs/config.yaml
+GOLANGCI_LINT_VERSION?=v2.13.2
+GOLANGCI_LINT_BIN=bin/golangci-lint
+GOLANGCI_LINT_CACHE=$(CURDIR)/bin/.cache/golangci-lint
+GOLANGCI_LINT_GO_CACHE=$(CURDIR)/bin/.cache/go-build
 
 build:
 	go build -o bin/$(APP) ./cmd/proxy
@@ -11,6 +15,17 @@ run: build
 
 test:
 	go test ./...
+
+lint: $(GOLANGCI_LINT_BIN)
+	GOCACHE=$(GOLANGCI_LINT_GO_CACHE) GOLANGCI_LINT_CACHE=$(GOLANGCI_LINT_CACHE) $(GOLANGCI_LINT_BIN) run ./...
+
+lint-install:
+	curl -sSfL https://golangci-lint.run/install.sh -o bin/golangci-lint-install.sh
+	sh bin/golangci-lint-install.sh -b ./bin $(GOLANGCI_LINT_VERSION)
+	rm bin/golangci-lint-install.sh
+
+$(GOLANGCI_LINT_BIN):
+	$(MAKE) lint-install
 
 tidy:
 	go mod tidy

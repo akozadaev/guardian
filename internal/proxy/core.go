@@ -175,7 +175,7 @@ func (c *Core) HandleCONNECT(ctx *fasthttp.RequestCtx) error {
 	ctx.Response.Header.Set("Connection", "keep-alive")
 	ctx.HijackSetNoResponse(true)
 	ctx.Hijack(func(clientConn net.Conn) {
-		defer dest.Close()
+		defer func() { _ = dest.Close() }()
 		c.activeTunnel.Add(1)
 		defer c.activeTunnel.Add(-1)
 

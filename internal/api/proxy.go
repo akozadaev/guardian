@@ -143,9 +143,9 @@ func (h *Handler) ProxyHandler(ctx *fasthttp.RequestCtx) {
 	status := ctx.Response.StatusCode()
 	if cacheKey != "" && status == 200 && isCacheableResponse(&ctx.Response) {
 		hdrs := map[string]string{}
-		ctx.Response.Header.VisitAll(func(k, v []byte) {
+		for k, v := range ctx.Response.Header.All() {
 			hdrs[string(k)] = string(v)
-		})
+		}
 		packed, _ := json.Marshal(cachedResponse{
 			Status:  status,
 			Body:    append([]byte(nil), ctx.Response.Body()...),
@@ -235,9 +235,9 @@ func (h *Handler) block(ctx *fasthttp.RequestCtx, res filter.Result, start time.
 
 func (h *Handler) buildRequestContext(ctx *fasthttp.RequestCtx, ip string, tc *models.TokenClaims) *models.RequestContext {
 	headers := make(map[string]string, 16)
-	ctx.Request.Header.VisitAll(func(k, v []byte) {
+	for k, v := range ctx.Request.Header.All() {
 		headers[string(k)] = string(v)
-	})
+	}
 	r := &models.RequestContext{
 		Method:      string(ctx.Method()),
 		URL:         string(ctx.URI().FullURI()),
