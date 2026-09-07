@@ -1,7 +1,7 @@
+// Package config загружает и описывает конфигурацию Guardian.
 package config
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -21,6 +21,7 @@ type Config struct {
 	Log       LogConfig       `mapstructure:"log"`
 }
 
+// ServerConfig задаёт параметры прокси-, admin- и metrics-серверов.
 type ServerConfig struct {
 	ProxyAddr       string        `mapstructure:"proxy_addr"`
 	AdminAddr       string        `mapstructure:"admin_addr"`
@@ -34,6 +35,7 @@ type ServerConfig struct {
 	TrustedProxies  []string      `mapstructure:"trusted_proxies"`
 }
 
+// ProxyConfig задаёт параметры подключения к целевым HTTP-серверам.
 type ProxyConfig struct {
 	MaxConnsPerHost     int           `mapstructure:"max_conns_per_host"`
 	ReadTimeout         time.Duration `mapstructure:"read_timeout"`
@@ -46,6 +48,7 @@ type ProxyConfig struct {
 	AllowPrivateTargets bool          `mapstructure:"allow_private_targets"`
 }
 
+// PostgresConfig задаёт параметры пулов PostgreSQL.
 type PostgresConfig struct {
 	DSN             string        `mapstructure:"dsn"`
 	MaxConns        int32         `mapstructure:"max_conns"`
@@ -55,6 +58,7 @@ type PostgresConfig struct {
 	ReadReplicaDSN  string        `mapstructure:"read_replica_dsn"`
 }
 
+// RedisConfig задаёт параметры клиента Redis.
 type RedisConfig struct {
 	Addr     string `mapstructure:"addr"`
 	Password string `mapstructure:"password"`
@@ -63,6 +67,7 @@ type RedisConfig struct {
 	Enabled  bool   `mapstructure:"enabled"`
 }
 
+// AuthConfig задаёт параметры аутентификации (JWT, OAuth2, bootstrap).
 type AuthConfig struct {
 	JWTSecret           string        `mapstructure:"jwt_secret"`
 	JWTIssuer           string        `mapstructure:"jwt_issuer"`
@@ -76,22 +81,25 @@ type AuthConfig struct {
 	BootstrapToken string `mapstructure:"bootstrap_token"`
 }
 
+// CacheConfig задаёт параметры кэширования правил и ответов.
 type CacheConfig struct {
 	RulesTTL        time.Duration `mapstructure:"rules_ttl"`
 	ResponseTTL     time.Duration `mapstructure:"response_ttl"`
-	AuthTTL         time.Duration `mapstructure:"auth_ttl"`
 	Enabled         bool          `mapstructure:"enabled"`
 	ResponseEnabled bool          `mapstructure:"response_enabled"`
 }
 
+// QueueConfig задаёт параметры очереди событий.
 type QueueConfig struct {
 	Enabled bool   `mapstructure:"enabled"`
 	Backend string `mapstructure:"backend"` // допустимые значения: kafka | none
 	Brokers string `mapstructure:"brokers"`
 	Topic   string `mapstructure:"topic"`
+	// GroupID сохраняет совместимое имя настройки и используется издателем как Kafka client ID.
 	GroupID string `mapstructure:"group_id"`
 }
 
+// RateLimitConfig задаёт ограничения частоты запросов и числа соединений.
 type RateLimitConfig struct {
 	Enabled       bool `mapstructure:"enabled"`
 	DefaultRPS    int  `mapstructure:"default_rps"`
@@ -100,34 +108,11 @@ type RateLimitConfig struct {
 	MaxConnsPerIP int  `mapstructure:"max_conns_per_ip"`
 }
 
+// LogConfig задаёт формат, уровень и способ хранения журналов.
 type LogConfig struct {
 	Level           string `mapstructure:"level"`
 	Format          string `mapstructure:"format"`           // допустимые значения: json | console
 	PersistRequests bool   `mapstructure:"persist_requests"` // синхронная вставка в PG (по умолчанию выключена ради RPS)
-}
-
-// Load читает конфигурацию из файла и окружения.
-func Load(path string) (*Config, error) {
-	v := viper.New()
-	v.SetConfigFile(path)
-	v.SetEnvPrefix("GUARDIAN")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-	setDefaults(v)
-
-	if err := v.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			if path != "" {
-				return nil, fmt.Errorf("read config: %w", err)
-			}
-		}
-	}
-
-	var cfg Config
-	if err := v.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("unmarshal config: %w", err)
-	}
-	return &cfg, nil
 }
 
 // LoadOrDefault загружает конфигурацию или возвращает значения по умолчанию, если файл отсутствует.
@@ -193,7 +178,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("cache.enabled", true)
 	v.SetDefault("cache.rules_ttl", "30s")
 	v.SetDefault("cache.response_ttl", "60s")
-	v.SetDefault("cache.auth_ttl", "10m")
 	v.SetDefault("cache.response_enabled", false)
 
 	v.SetDefault("queue.enabled", false)

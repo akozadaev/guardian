@@ -1,3 +1,4 @@
+// Package server собирает зависимости и управляет жизненным циклом Guardian.
 package server
 
 import (
@@ -42,14 +43,18 @@ type App struct {
 	ready   atomic.Bool
 }
 
+// New создаёт приложение и инициализирует его зависимости.
 func New(cfg *config.Config) (*App, error) {
 	log, err := newLogger(cfg.Log)
 	if err != nil {
 		return nil, err
 	}
 
-	if auth.WeakSecret(cfg.Auth.JWTSecret) {
+	if auth.WeakSecret(cfg.Auth.JWTSecret) && (!cfg.Auth.OAuth2Enabled || cfg.Auth.BootstrapToken != "") {
 		return nil, fmt.Errorf("auth.jwt_secret is missing or insecure; set GUARDIAN_AUTH_JWT_SECRET to a strong value (≥16 chars)")
+	}
+	if cfg.Auth.OAuth2Enabled && cfg.Auth.OAuth2IntrospectURL == "" && cfg.Auth.OAuth2JWKSURL == "" {
+		return nil, fmt.Errorf("OAuth2 is enabled but neither auth.oauth2_introspect_url nor auth.oauth2_jwks_url is configured")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -61,16 +66,16 @@ func New(cfg *config.Config) (*App, error) {
 	}
 
 	rdb := cache.NewRedisClient(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.PoolSize)
-	store := cache.NewStore(rdb, cfg.Redis.Enabled, cfg.Cache.RulesTTL, cfg.Cache.AuthTTL, cfg.Cache.ResponseTTL)
+	store := cache.NewStore(rdb, cfg.Redis.Enabled, cfg.Cache.RulesTTL, cfg.Cache.ResponseTTL)
 	if cfg.Redis.Enabled {
 		if err := store.Ping(ctx); err != nil {
 			log.Warn("redis unavailable, falling back to memory cache", zap.Error(err))
 			_ = rdb.Close()
-			store = cache.NewStore(nil, false, cfg.Cache.RulesTTL, cfg.Cache.AuthTTL, cfg.Cache.ResponseTTL)
+			store = cache.NewStore(nil, false, cfg.Cache.RulesTTL, cfg.Cache.ResponseTTL)
 		}
 	} else {
 		_ = rdb.Close()
-		store = cache.NewStore(nil, false, cfg.Cache.RulesTTL, cfg.Cache.AuthTTL, cfg.Cache.ResponseTTL)
+		store = cache.NewStore(nil, false, cfg.Cache.RulesTTL, cfg.Cache.ResponseTTL)
 	}
 
 	authSvc := auth.NewService(
@@ -81,13 +86,20 @@ func New(cfg *config.Config) (*App, error) {
 		cfg.RateLimit.DefaultRPS,
 		cfg.RateLimit.Burst,
 	)
+	if cfg.Auth.OAuth2Enabled {
+		authSvc.SetExternalTokenValidator(auth.NewOAuth2Validator(
+			cfg.Auth.OAuth2IntrospectURL,
+			cfg.Auth.OAuth2JWKSURL,
+			cfg.Auth.JWTIssuer,
+		))
+	}
 
 	engine := filter.NewEngine()
 	core := proxy.NewCore(cfg.Proxy, cfg.Proxy.AllowPrivateTargets)
 	mc := metrics.New()
 
 	brokers := strings.Split(cfg.Queue.Brokers, ",")
-	pub := queue.NewPublisher(cfg.Queue.Enabled, cfg.Queue.Backend, brokers, cfg.Queue.Topic, log)
+	pub := queue.NewPublisher(cfg.Queue.Enabled, cfg.Queue.Backend, brokers, cfg.Queue.Topic, cfg.Queue.GroupID, log)
 
 	trusted, err := netutil.ParseCIDRs(cfg.Server.TrustedProxies)
 	if err != nil {
@@ -127,6 +139,7 @@ func New(cfg *config.Config) (*App, error) {
 	return app, nil
 }
 
+// Run запускает proxy/admin/metrics, фоновые задачи и ждёт сигнал завершения.
 func (a *App) Run() error {
 	a.handler.ReloadRulesFromDB()
 	a.ready.Store(true)

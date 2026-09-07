@@ -1,3 +1,4 @@
+// Package api реализует публичный прокси-обработчик и административный HTTP API.
 package api
 
 import (
@@ -185,6 +186,20 @@ func (h *Handler) issueDevToken(ctx *fasthttp.RequestCtx) {
 	}
 	h.audit(nil, "auth.bootstrap_token", u.ID.String(), h.clientIP(ctx), map[string]string{"email": u.Email})
 	writeJSON(ctx, 200, TokenResponse{AccessToken: tok, TokenType: "Bearer"})
+}
+
+func (h *Handler) logout(ctx *fasthttp.RequestCtx) {
+	authz := string(ctx.Request.Header.Peek("Authorization"))
+	if _, err := h.Auth.ValidateToken(context.Background(), authz); err != nil {
+		writeErr(ctx, fasthttp.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if err := h.Auth.InvalidateToken(context.Background(), authz); err != nil {
+		writeErr(ctx, fasthttp.StatusInternalServerError, "token revocation failed")
+		return
+	}
+	ctx.SetStatusCode(fasthttp.StatusNoContent)
 }
 
 func (h *Handler) listRules(ctx *fasthttp.RequestCtx) {

@@ -1,3 +1,4 @@
+// Package ratelimit ограничивает число одновременных соединений на IP.
 package ratelimit
 
 import (
@@ -12,6 +13,7 @@ type ConnTracker struct {
 	maxPerIP int
 }
 
+// NewConnTracker создаёт счётчик с заданным лимитом соединений на IP-адрес.
 func NewConnTracker(maxPerIP int) *ConnTracker {
 	if maxPerIP <= 0 {
 		maxPerIP = 100

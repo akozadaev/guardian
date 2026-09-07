@@ -1,3 +1,4 @@
+// Package queue публикует журналы запросов и аудита во внешнюю очередь.
 package queue
 
 import (
@@ -20,9 +21,14 @@ type Publisher interface {
 // NopPublisher отбрасывает события.
 type NopPublisher struct{}
 
+// PublishRequestLog отбрасывает журнал запроса.
 func (NopPublisher) PublishRequestLog(context.Context, *models.RequestLog) error { return nil }
-func (NopPublisher) PublishAudit(context.Context, *models.AuditLog) error        { return nil }
-func (NopPublisher) Close() error                                                { return nil }
+
+// PublishAudit отбрасывает запись аудита.
+func (NopPublisher) PublishAudit(context.Context, *models.AuditLog) error { return nil }
+
+// Close завершает работу издателя без дополнительных действий.
+func (NopPublisher) Close() error { return nil }
 
 // KafkaPublisher использует segmentio/kafka-go с подтверждениями RequireAll.
 type KafkaPublisher struct {
@@ -30,7 +36,8 @@ type KafkaPublisher struct {
 	log    *zap.Logger
 }
 
-func NewKafkaPublisher(brokers []string, topic string, log *zap.Logger) *KafkaPublisher {
+// NewKafkaPublisher создаёт издателя событий Kafka.
+func NewKafkaPublisher(brokers []string, topic, clientID string, log *zap.Logger) *KafkaPublisher {
 	w := &kafka.Writer{
 		Addr:         kafka.TCP(brokers...),
 		Topic:        topic,
@@ -40,13 +47,18 @@ func NewKafkaPublisher(brokers []string, topic string, log *zap.Logger) *KafkaPu
 		BatchTimeout: 10 * time.Millisecond,
 		BatchSize:    100,
 	}
+	if clientID != "" {
+		w.Transport = &kafka.Transport{ClientID: clientID}
+	}
 	return &KafkaPublisher{writer: w, log: log}
 }
 
+// PublishRequestLog отправляет журнал запроса в Kafka.
 func (k *KafkaPublisher) PublishRequestLog(ctx context.Context, log *models.RequestLog) error {
 	return k.publish(ctx, "request_log", log)
 }
 
+// PublishAudit отправляет запись аудита в Kafka.
 func (k *KafkaPublisher) PublishAudit(ctx context.Context, log *models.AuditLog) error {
 	return k.publish(ctx, "audit", log)
 }
@@ -67,17 +79,18 @@ func (k *KafkaPublisher) publish(ctx context.Context, key string, v any) error {
 	return err
 }
 
+// Close закрывает Kafka writer и ожидает отправки накопленных сообщений.
 func (k *KafkaPublisher) Close() error {
 	return k.writer.Close()
 }
 
-// NewPublisher выбирает бэкенд из конфигурации.
-func NewPublisher(enabled bool, backend string, brokers []string, topic string, log *zap.Logger) Publisher {
+// NewPublisher возвращает Kafka-издателя или NopPublisher.
+func NewPublisher(enabled bool, backend string, brokers []string, topic, clientID string, log *zap.Logger) Publisher {
 	if !enabled || backend == "" || backend == "none" {
 		return NopPublisher{}
 	}
 	if backend == "kafka" && len(brokers) > 0 {
-		return NewKafkaPublisher(brokers, topic, log)
+		return NewKafkaPublisher(brokers, topic, clientID, log)
 	}
 	return NopPublisher{}
 }

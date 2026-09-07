@@ -154,6 +154,14 @@ var adminRoutes = []Route{
 		handler: func(h *Handler, ctx *fasthttp.RequestCtx) { h.issueDevToken(ctx) },
 	},
 	{
+		Method: http.MethodPost, Path: "/api/v1/auth/logout", Summary: "Отзыв текущего JWT", Security: true,
+		Responses: []RouteResponse{
+			{Status: 204, Description: "Токен отозван"},
+			{Status: 401, Description: "Токен отсутствует или недействителен", Body: errorBody},
+		},
+		handler: func(h *Handler, ctx *fasthttp.RequestCtx) { h.logout(ctx) },
+	},
+	{
 		Method: http.MethodGet, Path: "/api/v1/rules", Summary: "Список правил", Security: true,
 		Parameters: []RouteParameter{
 			{Name: "page", In: "query", Type: "integer"},

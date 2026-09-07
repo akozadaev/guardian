@@ -1,3 +1,4 @@
+// Command proxy запускает прокси-сервер Guardian.
 package main
 
 import (

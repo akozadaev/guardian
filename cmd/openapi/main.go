@@ -1,3 +1,4 @@
+// Command openapi генерирует спецификацию OpenAPI административного API Guardian.
 package main
 
 import (

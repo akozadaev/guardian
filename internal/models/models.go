@@ -1,3 +1,4 @@
+// Package models содержит доменные модели Guardian.
 package models
 
 import (
@@ -7,9 +8,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// Role представляет роли RBAC.
+// Role представляет роль RBAC.
 type Role string
 
+// Поддерживаемые роли пользователей.
 const (
 	RoleAdmin     Role = "admin"
 	RoleModerator Role = "moderator"
@@ -20,15 +22,17 @@ const (
 // Action задаёт действие правила фильтрации.
 type Action string
 
+// Поддерживаемые действия правил фильтрации.
 const (
 	ActionAllow  Action = "allow"
 	ActionBlock  Action = "block"
 	ActionModify Action = "modify"
 )
 
-// ConditionOperator задаёт оператор составных правил.
+// ConditionOperator задаёт оператор составных условий.
 type ConditionOperator string
 
+// Поддерживаемые операторы составных условий.
 const (
 	OpAND ConditionOperator = "AND"
 	OpOR  ConditionOperator = "OR"
@@ -38,6 +42,7 @@ const (
 // FieldOperator задаёт оператор сопоставления одного условия.
 type FieldOperator string
 
+// Поддерживаемые операторы сопоставления полей.
 const (
 	FieldEq       FieldOperator = "eq"
 	FieldNeq      FieldOperator = "neq"
@@ -62,7 +67,7 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// RuleResponse представляет HTTP-ответ, возвращаемый при блокировке или изменении запроса.
+// RuleResponse - HTTP-ответ при блокировке запроса.
 type RuleResponse struct {
 	Status  int               `json:"status"`
 	Body    string            `json:"body"`
@@ -162,7 +167,7 @@ type AuditLog struct {
 	CreatedAt time.Time       `json:"created_at"`
 }
 
-// RequestLog хранит записи о проксированных запросах (асинхронно).
+// RequestLog - запись о проксированном запросе.
 type RequestLog struct {
 	ID             uuid.UUID  `json:"id"`
 	RequestID      uuid.UUID  `json:"request_id"`
@@ -175,7 +180,7 @@ type RequestLog struct {
 	CreatedAt      time.Time  `json:"created_at"`
 }
 
-// RequestContext содержит данные запроса, используемые механизмом фильтрации.
+// RequestContext содержит данные запроса, используемые движком фильтрации.
 type RequestContext struct {
 	Method      string            `json:"method"`
 	URL         string            `json:"url"`
@@ -191,7 +196,7 @@ type RequestContext struct {
 	Role        string            `json:"role"`
 }
 
-// TokenClaims содержит данные, полученные после проверки JWT.
+// TokenClaims - данные после проверки токена.
 type TokenClaims struct {
 	UserID   uuid.UUID `json:"user_id"`
 	Email    string    `json:"email"`
@@ -210,12 +215,13 @@ type Stats struct {
 	ByStatus        map[string]int64 `json:"by_status"`
 }
 
-// Вспомогательные типы для пагинации.
+// PageParams задаёт номер и размер страницы.
 type PageParams struct {
 	Page  int `json:"page"`
 	Limit int `json:"limit"`
 }
 
+// Offset возвращает смещение страницы с учётом допустимых значений параметров.
 func (p PageParams) Offset() int {
 	if p.Page < 1 {
 		p.Page = 1
@@ -229,6 +235,7 @@ func (p PageParams) Offset() int {
 	return (p.Page - 1) * p.Limit
 }
 
+// PageResult содержит одну страницу элементов и сведения о пагинации.
 type PageResult[T any] struct {
 	Items      []T   `json:"items"`
 	Total      int64 `json:"total"`

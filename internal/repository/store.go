@@ -1,3 +1,4 @@
+// Package repository предоставляет доступ к данным Guardian в PostgreSQL.
 package repository
 
 import (
@@ -19,6 +20,7 @@ type Store struct {
 	Replica *pgxpool.Pool
 }
 
+// NewStore открывает пул основной БД и необязательный пул реплики для чтения.
 func NewStore(ctx context.Context, cfg config.PostgresConfig) (*Store, error) {
 	poolCfg, err := pgxpool.ParseConfig(cfg.DSN)
 	if err != nil {
@@ -54,6 +56,7 @@ func NewStore(ctx context.Context, cfg config.PostgresConfig) (*Store, error) {
 	return s, nil
 }
 
+// Close закрывает все уникальные пулы подключений хранилища.
 func (s *Store) Close() {
 	if s.Replica != nil && s.Replica != s.Primary {
 		s.Replica.Close()
@@ -72,6 +75,7 @@ func (s *Store) reader() *pgxpool.Pool {
 
 // --- Пользователи ---
 
+// CreateUser сохраняет нового пользователя в основной БД.
 func (s *Store) CreateUser(ctx context.Context, u *models.User) error {
 	if u.ID == uuid.Nil {
 		u.ID = uuid.New()
@@ -85,6 +89,7 @@ func (s *Store) CreateUser(ctx context.Context, u *models.User) error {
 	return err
 }
 
+// GetUser возвращает пользователя по идентификатору.
 func (s *Store) GetUser(ctx context.Context, id uuid.UUID) (*models.User, error) {
 	row := s.reader().QueryRow(ctx, `
 		SELECT id, email, role, active, COALESCE(quota_rps,1000), created_at, COALESCE(updated_at, created_at)
@@ -92,6 +97,7 @@ func (s *Store) GetUser(ctx context.Context, id uuid.UUID) (*models.User, error)
 	return scanUser(row)
 }
 
+// GetUserByEmail возвращает пользователя по адресу электронной почты.
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
 	row := s.reader().QueryRow(ctx, `
 		SELECT id, email, role, active, COALESCE(quota_rps,1000), created_at, COALESCE(updated_at, created_at)
@@ -99,6 +105,7 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*models.User,
 	return scanUser(row)
 }
 
+// UpdateUser обновляет данные пользователя в основной БД.
 func (s *Store) UpdateUser(ctx context.Context, u *models.User) error {
 	u.UpdatedAt = time.Now().UTC()
 	ct, err := s.Primary.Exec(ctx, `
@@ -113,6 +120,7 @@ func (s *Store) UpdateUser(ctx context.Context, u *models.User) error {
 	return nil
 }
 
+// DeleteUser удаляет пользователя по идентификатору.
 func (s *Store) DeleteUser(ctx context.Context, id uuid.UUID) error {
 	ct, err := s.Primary.Exec(ctx, `DELETE FROM users WHERE id=$1`, id)
 	if err != nil {
@@ -124,6 +132,7 @@ func (s *Store) DeleteUser(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// ListUsers возвращает страницу пользователей.
 func (s *Store) ListUsers(ctx context.Context, p models.PageParams) (*models.PageResult[models.User], error) {
 	if p.Page < 1 {
 		p.Page = 1
@@ -172,6 +181,7 @@ func scanUser(row scannable) (*models.User, error) {
 
 // --- Правила ---
 
+// CreateRule сохраняет новое правило в основной БД.
 func (s *Store) CreateRule(ctx context.Context, r *models.Rule) error {
 	if r.ID == uuid.Nil {
 		r.ID = uuid.New()
@@ -197,6 +207,7 @@ func (s *Store) CreateRule(ctx context.Context, r *models.Rule) error {
 	return err
 }
 
+// GetRule возвращает правило по идентификатору.
 func (s *Store) GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, error) {
 	row := s.reader().QueryRow(ctx, `
 		SELECT id, name, priority, enabled, conditions, action, response, modify, created_by, created_at, COALESCE(updated_at, created_at)
@@ -204,6 +215,7 @@ func (s *Store) GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, error)
 	return scanRule(row)
 }
 
+// UpdateRule обновляет правило в основной БД.
 func (s *Store) UpdateRule(ctx context.Context, r *models.Rule) error {
 	r.UpdatedAt = time.Now().UTC()
 	cond, err := json.Marshal(r.Conditions)
@@ -230,6 +242,7 @@ func (s *Store) UpdateRule(ctx context.Context, r *models.Rule) error {
 	return nil
 }
 
+// DeleteRule удаляет правило по идентификатору.
 func (s *Store) DeleteRule(ctx context.Context, id uuid.UUID) error {
 	ct, err := s.Primary.Exec(ctx, `DELETE FROM rules WHERE id=$1`, id)
 	if err != nil {
@@ -241,6 +254,7 @@ func (s *Store) DeleteRule(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// ListRules возвращает страницу правил.
 func (s *Store) ListRules(ctx context.Context, p models.PageParams) (*models.PageResult[models.Rule], error) {
 	if p.Page < 1 {
 		p.Page = 1
@@ -274,6 +288,7 @@ func (s *Store) ListRules(ctx context.Context, p models.PageParams) (*models.Pag
 	return &models.PageResult[models.Rule]{Items: items, Total: total, Page: p.Page, Limit: p.Limit, TotalPages: pages}, nil
 }
 
+// ListEnabledRules возвращает включённые правила в порядке убывания приоритета.
 func (s *Store) ListEnabledRules(ctx context.Context) ([]models.Rule, error) {
 	rows, err := s.reader().Query(ctx, `
 		SELECT id, name, priority, enabled, conditions, action, response, modify, created_by, created_at, COALESCE(updated_at, created_at)
@@ -324,6 +339,7 @@ func scanRule(row scannable) (*models.Rule, error) {
 
 // --- Журналы аудита и запросов ---
 
+// InsertAudit сохраняет запись административного аудита.
 func (s *Store) InsertAudit(ctx context.Context, a *models.AuditLog) error {
 	if a.ID == uuid.Nil {
 		a.ID = uuid.New()
@@ -338,6 +354,7 @@ func (s *Store) InsertAudit(ctx context.Context, a *models.AuditLog) error {
 	return err
 }
 
+// InsertRequestLog сохраняет журнал проксированного запроса.
 func (s *Store) InsertRequestLog(ctx context.Context, l *models.RequestLog) error {
 	if l.ID == uuid.Nil {
 		l.ID = uuid.New()
@@ -352,6 +369,7 @@ func (s *Store) InsertRequestLog(ctx context.Context, l *models.RequestLog) erro
 	return err
 }
 
+// RuleStats возвращает статистику срабатываний по правилам.
 func (s *Store) RuleStats(ctx context.Context) ([]map[string]any, error) {
 	rows, err := s.reader().Query(ctx, `
 		SELECT COALESCE(rule_id::text,''), COUNT(*), AVG(response_time_ms)
@@ -374,6 +392,7 @@ func (s *Store) RuleStats(ctx context.Context) ([]map[string]any, error) {
 	return out, nil
 }
 
+// UserStats возвращает статистику запросов по пользователям.
 func (s *Store) UserStats(ctx context.Context) ([]map[string]any, error) {
 	rows, err := s.reader().Query(ctx, `
 		SELECT COALESCE(user_id::text,''), COUNT(*), AVG(response_time_ms)

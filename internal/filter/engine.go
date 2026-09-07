@@ -1,3 +1,4 @@
+// Package filter проверяет HTTP-запросы по настроенным правилам фильтрации.
 package filter
 
 import (
@@ -9,10 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/akozadaev/guardian/internal/models"
-	"github.com/google/uuid"
 )
 
 // Result представляет результат проверки запроса по правилам.
@@ -29,9 +28,9 @@ type Engine struct {
 	mu      sync.RWMutex
 	rules   []models.Rule
 	reCache sync.Map // строка -> *regexp.Regexp
-	hits    atomic.Int64
 }
 
+// NewEngine создаёт движок фильтрации без правил.
 func NewEngine() *Engine {
 	return &Engine{rules: make([]models.Rule, 0)}
 }
@@ -46,15 +45,6 @@ func (e *Engine) SetRules(rules []models.Rule) {
 	e.mu.Lock()
 	e.rules = sorted
 	e.mu.Unlock()
-}
-
-// Rules возвращает копию текущих правил.
-func (e *Engine) Rules() []models.Rule {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	out := make([]models.Rule, len(e.rules))
-	copy(out, e.rules)
-	return out
 }
 
 // Evaluate применяет включённые правила в порядке приоритета; используется первое совпадение.
@@ -72,7 +62,6 @@ func (e *Engine) Evaluate(ctx *models.RequestContext) Result {
 		if err != nil || !ok {
 			continue
 		}
-		e.hits.Add(1)
 		ruleCopy := *r
 		return Result{
 			Matched:  true,
@@ -89,8 +78,6 @@ func (e *Engine) Evaluate(ctx *models.RequestContext) Result {
 func (e *Engine) TestRule(rule *models.Rule, ctx *models.RequestContext) (bool, error) {
 	return e.matchNode(&rule.Conditions, ctx)
 }
-
-func (e *Engine) Hits() int64 { return e.hits.Load() }
 
 func (e *Engine) matchNode(node *models.ConditionNode, ctx *models.RequestContext) (bool, error) {
 	if node == nil {
@@ -395,9 +382,4 @@ func validateNode(node *models.ConditionNode, depth int) error {
 		}
 	}
 	return nil
-}
-
-// ParseUUID - вспомогательная функция разбора UUID.
-func ParseUUID(s string) (uuid.UUID, error) {
-	return uuid.Parse(s)
 }

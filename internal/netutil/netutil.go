@@ -1,3 +1,4 @@
+// Package netutil содержит вспомогательные функции для безопасной работы с сетевыми адресами.
 package netutil
 
 import (
@@ -6,7 +7,7 @@ import (
 	"strings"
 )
 
-// IsPrivateOrLocal сообщает, является ли IP-адрес кольцевым, локальным для канала, частным или неопределённым.
+// IsPrivateOrLocal сообщает, является ли IP loopback, link-local, частным (в т.ч. CGNAT/ULA) или unspecified.
 func IsPrivateOrLocal(ip net.IP) bool {
 	if ip == nil {
 		return true
@@ -36,8 +37,8 @@ func IsPrivateOrLocal(ip net.IP) bool {
 	return false
 }
 
-// HostIsBlockedForProxy разрешает имя хоста (без порта) и возвращает true, если хотя бы один адрес частный или локальный,
-// либо если allowPrivate равен false и при ошибке разрешения доступ запрещается по умолчанию.
+// HostIsBlockedForProxy возвращает true, если цель нельзя проксировать при allowPrivate=false:
+// частный/локальный IP, localhost/.local или ошибка DNS (fail-closed).
 func HostIsBlockedForProxy(host string, allowPrivate bool) bool {
 	if allowPrivate {
 		return false
@@ -67,8 +68,8 @@ func HostIsBlockedForProxy(host string, allowPrivate bool) bool {
 	return false
 }
 
-// ClientIP возвращает настоящий IP-адрес клиента.
-// X-Forwarded-For / X-Real-IP считаются доверенными, только когда remoteAddr входит в trustedProxies.
+// ClientIP возвращает IP клиента с учётом доверенных прокси.
+// X-Forwarded-For / X-Real-IP учитываются, только если remoteAddr входит в trustedProxies.
 func ClientIP(remoteAddr string, xff, xRealIP string, trustedProxies []netip.Prefix) string {
 	host := remoteHost(remoteAddr)
 	remoteIP, err := netip.ParseAddr(host)
@@ -132,7 +133,7 @@ func isTrusted(ip netip.Addr, trusted []netip.Prefix) bool {
 	return false
 }
 
-// ParseCIDRs преобразует список строк CIDR в сетевые префиксы.
+// ParseCIDRs разбирает список CIDR; одиночный IP допускается как /32 или /128.
 func ParseCIDRs(cidrs []string) ([]netip.Prefix, error) {
 	out := make([]netip.Prefix, 0, len(cidrs))
 	for _, c := range cidrs {

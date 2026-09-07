@@ -1,3 +1,4 @@
+// Package cache предоставляет локальное и Redis-кэширование данных Guardian.
 package cache
 
 import (
@@ -17,16 +18,13 @@ type Store struct {
 	enabled  bool
 	local    *sync.Map
 	rulesTTL time.Duration
-	authTTL  time.Duration
 	respTTL  time.Duration
 }
 
-func NewStore(rdb *redis.Client, enabled bool, rulesTTL, authTTL, respTTL time.Duration) *Store {
+// NewStore создаёт хранилище с локальным in-memory кэшем и опциональным Redis.
+func NewStore(rdb *redis.Client, enabled bool, rulesTTL, respTTL time.Duration) *Store {
 	if rulesTTL == 0 {
 		rulesTTL = 30 * time.Second
-	}
-	if authTTL == 0 {
-		authTTL = 10 * time.Minute
 	}
 	if respTTL == 0 {
 		respTTL = 60 * time.Second
@@ -36,13 +34,11 @@ func NewStore(rdb *redis.Client, enabled bool, rulesTTL, authTTL, respTTL time.D
 		enabled:  enabled && rdb != nil,
 		local:    &sync.Map{},
 		rulesTTL: rulesTTL,
-		authTTL:  authTTL,
 		respTTL:  respTTL,
 	}
 }
 
-func (s *Store) Client() *redis.Client { return s.rdb }
-
+// Ping проверяет доступность Redis, если он включён.
 func (s *Store) Ping(ctx context.Context) error {
 	if !s.enabled {
 		return nil
@@ -52,6 +48,7 @@ func (s *Store) Ping(ctx context.Context) error {
 
 // --- Интерфейс auth.TokenCache ---
 
+// Get возвращает значение из локального кэша или Redis.
 func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
 	if v, ok := s.local.Load(key); ok {
 		e := v.(localEntry)
@@ -70,6 +67,7 @@ func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
 	return val, err
 }
 
+// Set сохраняет значение в локальном кэше и, если он включён, в Redis.
 func (s *Store) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
 	s.local.Store(key, localEntry{val: value, exp: time.Now().Add(ttl)})
 	if !s.enabled {
@@ -78,6 +76,7 @@ func (s *Store) Set(ctx context.Context, key string, value []byte, ttl time.Dura
 	return s.rdb.Set(ctx, key, value, ttl).Err()
 }
 
+// Delete удаляет значение из локального кэша и Redis.
 func (s *Store) Delete(ctx context.Context, key string) error {
 	s.local.Delete(key)
 	if !s.enabled {
@@ -93,6 +92,7 @@ type localEntry struct {
 
 // Кэш правил
 
+// GetRules возвращает закэшированный набор правил.
 func (s *Store) GetRules(ctx context.Context) ([]models.Rule, bool) {
 	raw, err := s.Get(ctx, "rules:all")
 	if err != nil || raw == nil {
@@ -105,6 +105,7 @@ func (s *Store) GetRules(ctx context.Context) ([]models.Rule, bool) {
 	return rules, true
 }
 
+// SetRules сохраняет набор правил в кэше.
 func (s *Store) SetRules(ctx context.Context, rules []models.Rule) error {
 	raw, err := json.Marshal(rules)
 	if err != nil {
@@ -113,6 +114,7 @@ func (s *Store) SetRules(ctx context.Context, rules []models.Rule) error {
 	return s.Set(ctx, "rules:all", raw, s.rulesTTL)
 }
 
+// InvalidateRules удаляет набор правил из кэша.
 func (s *Store) InvalidateRules(ctx context.Context) error {
 	return s.Delete(ctx, "rules:all")
 }
@@ -123,6 +125,7 @@ func responseKey(urlHash string) string {
 	return fmt.Sprintf("cache:response:%s", urlHash)
 }
 
+// GetResponse возвращает закэшированный HTTP-ответ.
 func (s *Store) GetResponse(ctx context.Context, urlHash string) ([]byte, bool) {
 	raw, err := s.Get(ctx, responseKey(urlHash))
 	if err != nil || raw == nil {
@@ -131,23 +134,23 @@ func (s *Store) GetResponse(ctx context.Context, urlHash string) ([]byte, bool) 
 	return raw, true
 }
 
+// SetResponse сохраняет HTTP-ответ в кэше.
 func (s *Store) SetResponse(ctx context.Context, urlHash string, data []byte) error {
 	return s.Set(ctx, responseKey(urlHash), data, s.respTTL)
 }
 
-// Счётчик ограничения частоты через Redis (необязательный распределённый режим).
+// IncrRate увеличивает счётчик ограничения частоты в Redis.
 func (s *Store) IncrRate(ctx context.Context, key string, window time.Duration) (int64, error) {
 	if !s.enabled {
 		return 0, fmt.Errorf("redis disabled")
 	}
-	pipe := s.rdb.Pipeline()
-	incr := pipe.Incr(ctx, key)
-	pipe.Expire(ctx, key, window)
-	_, err := pipe.Exec(ctx)
-	if err != nil {
-		return 0, err
-	}
-	return incr.Val(), nil
+	const script = `
+local count = redis.call("INCR", KEYS[1])
+if count == 1 then
+  redis.call("PEXPIRE", KEYS[1], ARGV[1])
+end
+return count`
+	return s.rdb.Eval(ctx, script, []string{key}, window.Milliseconds()).Int64()
 }
 
 // NewRedisClient создаёт клиент go-redis.

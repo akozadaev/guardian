@@ -1,3 +1,4 @@
+// Package metrics регистрирует и предоставляет метрики Prometheus.
 package metrics
 
 import (
@@ -27,6 +28,7 @@ type Collector struct {
 	lastBytesOut    atomic.Int64
 }
 
+// New создаёт и регистрирует набор метрик Guardian.
 func New() *Collector {
 	return &Collector{
 		requestsTotal: promauto.NewCounterVec(prometheus.CounterOpts{
@@ -65,12 +67,14 @@ func New() *Collector {
 	}
 }
 
+// ObserveRequest регистрирует завершённый запрос и его длительность.
 func (c *Collector) ObserveRequest(method string, status int, seconds float64) {
 	c.requestsTotal.WithLabelValues(method, strconv.Itoa(status)).Inc()
 	c.requestDuration.WithLabelValues(method).Observe(seconds)
 	c.totalRequests.Add(1)
 }
 
+// ObserveBlocked учитывает блокировку правилом и hit этого правила.
 func (c *Collector) ObserveBlocked(ruleID, ruleName string) {
 	c.blockedTotal.Inc()
 	c.blockedRequests.Add(1)
@@ -79,7 +83,10 @@ func (c *Collector) ObserveBlocked(ruleID, ruleName string) {
 	}
 }
 
-func (c *Collector) SetActiveConns(n int64)   { c.activeConns.Set(float64(n)) }
+// SetActiveConns обновляет число активных подключений.
+func (c *Collector) SetActiveConns(n int64) { c.activeConns.Set(float64(n)) }
+
+// SetActiveTunnels обновляет число активных CONNECT-туннелей.
 func (c *Collector) SetActiveTunnels(n int64) { c.activeTunnels.Set(float64(n)) }
 
 // SyncBytes записывает в счётчики Prometheus разницу с момента последней синхронизации.
@@ -94,18 +101,10 @@ func (c *Collector) SyncBytes(in, out int64) {
 	}
 }
 
-func (c *Collector) AddBytesIn(n int64) {
-	if n > 0 {
-		c.bytesIn.Add(float64(n))
-	}
-}
-func (c *Collector) AddBytesOut(n int64) {
-	if n > 0 {
-		c.bytesOut.Add(float64(n))
-	}
-}
+// TotalRequests возвращает общее число обработанных запросов.
+func (c *Collector) TotalRequests() int64 { return c.totalRequests.Load() }
 
-func (c *Collector) TotalRequests() int64   { return c.totalRequests.Load() }
+// BlockedRequests возвращает число заблокированных запросов.
 func (c *Collector) BlockedRequests() int64 { return c.blockedRequests.Load() }
 
 // Handler возвращает HTTP-обработчик Prometheus.

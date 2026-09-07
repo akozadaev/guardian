@@ -1,7 +1,7 @@
+// Package proxy перенаправляет HTTP-запросы и создаёт HTTPS CONNECT-туннели.
 package proxy
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -15,23 +15,8 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-// ErrPrivateTarget возвращается при подключении к заблокированному частному или локальному адресу.
+// ErrPrivateTarget возвращается, если целевой адрес частный, локальный или иначе запрещён.
 var ErrPrivateTarget = fmt.Errorf("destination blocked: private or local address")
-
-var bufferPool = sync.Pool{
-	New: func() interface{} {
-		return bytes.NewBuffer(make([]byte, 0, 32*1024))
-	},
-}
-
-func GetBuffer() *bytes.Buffer {
-	return bufferPool.Get().(*bytes.Buffer)
-}
-
-func PutBuffer(b *bytes.Buffer) {
-	b.Reset()
-	bufferPool.Put(b)
-}
 
 var hopByHopHeaders = []string{
 	"Connection",
@@ -57,6 +42,7 @@ type Core struct {
 	allowPrivate bool
 }
 
+// NewCore создаёт ядро HTTP-прокси с заданными сетевыми ограничениями.
 func NewCore(cfg config.ProxyConfig, allowPrivate bool) *Core {
 	if cfg.BufferSize == 0 {
 		cfg.BufferSize = 32 * 1024
@@ -83,10 +69,17 @@ func NewCore(cfg config.ProxyConfig, allowPrivate bool) *Core {
 	return &Core{client: client, dialer: dialer, cfg: cfg, allowPrivate: allowPrivate}
 }
 
-func (c *Core) ActiveConns() int64   { return c.activeConns.Load() }
+// ActiveConns возвращает число активных подключений.
+func (c *Core) ActiveConns() int64 { return c.activeConns.Load() }
+
+// ActiveTunnels возвращает число активных CONNECT-туннелей.
 func (c *Core) ActiveTunnels() int64 { return c.activeTunnel.Load() }
-func (c *Core) BytesIn() int64       { return c.bytesIn.Load() }
-func (c *Core) BytesOut() int64      { return c.bytesOut.Load() }
+
+// BytesIn возвращает число байтов, полученных от upstream.
+func (c *Core) BytesIn() int64 { return c.bytesIn.Load() }
+
+// BytesOut возвращает число байтов, отправленных в upstream.
+func (c *Core) BytesOut() int64 { return c.bytesOut.Load() }
 
 // ForwardHTTP проксирует обычный HTTP-запрос.
 func (c *Core) ForwardHTTP(ctx *fasthttp.RequestCtx, clientIP string) error {
@@ -183,13 +176,13 @@ func (c *Core) HandleCONNECT(ctx *fasthttp.RequestCtx) error {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			n, _ := copyBuf(dest, clientConn)
+			n, _ := c.copyBuf(dest, clientConn)
 			c.bytesOut.Add(n)
 			closeWrite(dest)
 		}()
 		go func() {
 			defer wg.Done()
-			n, _ := copyBuf(clientConn, dest)
+			n, _ := c.copyBuf(clientConn, dest)
 			c.bytesIn.Add(n)
 			closeWrite(clientConn)
 		}()
@@ -223,8 +216,8 @@ func stripResponseHopByHop(resp *fasthttp.Response) {
 	}
 }
 
-func copyBuf(dst io.Writer, src io.Reader) (int64, error) {
-	buf := make([]byte, 32*1024)
+func (c *Core) copyBuf(dst io.Writer, src io.Reader) (int64, error) {
+	buf := make([]byte, c.cfg.BufferSize)
 	return io.CopyBuffer(dst, src, buf)
 }
 
@@ -251,6 +244,7 @@ func appendXFF(req *fasthttp.Request, clientIP string) {
 	req.Header.Set("X-Real-IP", clientIP)
 }
 
+// ApplyModifySpec применяет добавление, замену и удаление заголовков запроса.
 func ApplyModifySpec(req *fasthttp.Request, add, set map[string]string, remove []string) {
 	for _, h := range remove {
 		req.Header.Del(h)

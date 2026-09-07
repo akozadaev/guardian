@@ -1,3 +1,4 @@
+// Package auth реализует JWT-аутентификацию, RBAC и ограничение частоты запросов.
 package auth
 
 import (
@@ -19,6 +20,7 @@ import (
 // Permission представляет разрешение RBAC.
 type Permission string
 
+// Поддерживаемые разрешения RBAC.
 const (
 	PermRulesRead   Permission = "rules:read"
 	PermRulesWrite  Permission = "rules:write"
@@ -60,6 +62,15 @@ type TokenCache interface {
 	Delete(ctx context.Context, key string) error
 }
 
+type rateCounter interface {
+	IncrRate(ctx context.Context, key string, window time.Duration) (int64, error)
+}
+
+// ExternalTokenValidator проверяет токены во внешнем OAuth2.
+type ExternalTokenValidator interface {
+	ValidateToken(ctx context.Context, token string) (*models.TokenClaims, error)
+}
+
 // MemoryTokenCache представляет простой кэш с TTL.
 type MemoryTokenCache struct {
 	mu   sync.RWMutex
@@ -71,12 +82,14 @@ type cacheEntry struct {
 	exp time.Time
 }
 
+// NewMemoryTokenCache создаёт локальный кэш токенов с периодической очисткой.
 func NewMemoryTokenCache() *MemoryTokenCache {
 	c := &MemoryTokenCache{data: make(map[string]cacheEntry)}
 	go c.janitor()
 	return c
 }
 
+// Get возвращает значение из локального кэша токенов.
 func (c *MemoryTokenCache) Get(_ context.Context, key string) ([]byte, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -87,6 +100,7 @@ func (c *MemoryTokenCache) Get(_ context.Context, key string) ([]byte, error) {
 	return e.val, nil
 }
 
+// Set сохраняет значение в локальном кэше токенов.
 func (c *MemoryTokenCache) Set(_ context.Context, key string, value []byte, ttl time.Duration) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -94,6 +108,7 @@ func (c *MemoryTokenCache) Set(_ context.Context, key string, value []byte, ttl 
 	return nil
 }
 
+// Delete удаляет значение из локального кэша токенов.
 func (c *MemoryTokenCache) Delete(_ context.Context, key string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -129,8 +144,15 @@ type Service struct {
 	limiters   sync.Map // ключ -> *limiterEntry
 	defaultRPS int
 	burst      int
+	external   ExternalTokenValidator
 }
 
+// SetExternalTokenValidator включает проверку токенов через внешний OAuth2.
+func (s *Service) SetExternalTokenValidator(validator ExternalTokenValidator) {
+	s.external = validator
+}
+
+// NewService создаёт сервис JWT-аутентификации и ограничения частоты запросов.
 func NewService(secret, issuer string, cache TokenCache, cacheTTL time.Duration, defaultRPS, burst int) *Service {
 	if cache == nil {
 		cache = NewMemoryTokenCache()
@@ -192,6 +214,9 @@ func (s *Service) ValidateToken(ctx context.Context, tokenStr string) (*models.T
 	if tokenStr == "" {
 		return nil, fmt.Errorf("empty token")
 	}
+	if revoked, err := s.cache.Get(ctx, revokedTokenKey(tokenStr)); err == nil && revoked != nil {
+		return nil, fmt.Errorf("token revoked")
+	}
 
 	key := TokenCacheKey(tokenStr)
 	if raw, err := s.cache.Get(ctx, key); err == nil && raw != nil {
@@ -210,6 +235,17 @@ func (s *Service) ValidateToken(ctx context.Context, tokenStr string) (*models.T
 			}
 			return &tc, nil
 		}
+	}
+
+	if s.external != nil {
+		tc, err := s.external.ValidateToken(ctx, tokenStr)
+		if err != nil {
+			return nil, err
+		}
+		if raw, err := json.Marshal(tc); err == nil {
+			_ = s.cache.Set(ctx, key, raw, s.cacheTTL)
+		}
+		return tc, nil
 	}
 
 	parsed, err := jwt.ParseWithClaims(tokenStr, &claims{}, func(t *jwt.Token) (interface{}, error) {
@@ -258,11 +294,17 @@ func (s *Service) ValidateToken(ctx context.Context, tokenStr string) (*models.T
 func (s *Service) InvalidateToken(ctx context.Context, tokenStr string) error {
 	tokenStr = strings.TrimPrefix(tokenStr, "Bearer ")
 	tokenStr = strings.TrimSpace(tokenStr)
-	return s.cache.Delete(ctx, TokenCacheKey(tokenStr))
+	if tokenStr == "" {
+		return nil
+	}
+	if err := s.cache.Delete(ctx, TokenCacheKey(tokenStr)); err != nil {
+		return err
+	}
+	return s.cache.Set(ctx, revokedTokenKey(tokenStr), []byte("1"), 24*time.Hour)
 }
 
-// InvalidateUserTokens не может перечислить хеши JWT; вызывающая сторона должна сменить секрет или дождаться истечения TTL.
-// InvalidateUserCache удаляет синтетический ключ, используемый для хранения переопределений статуса пользователя.
+// InvalidateUserCache сбрасывает кэшированный статус пользователя.
+// Выданные JWT при этом не отзываются.
 func (s *Service) InvalidateUserCache(ctx context.Context, userID uuid.UUID) error {
 	return s.cache.Delete(ctx, "auth:user:"+userID.String())
 }
@@ -277,6 +319,12 @@ func (s *Service) SetUserActiveCache(ctx context.Context, userID uuid.UUID, acti
 func (s *Service) AllowRate(key string, rps int) bool {
 	if rps <= 0 {
 		rps = s.defaultRPS
+	}
+	if counter, ok := s.cache.(rateCounter); ok {
+		count, err := counter.IncrRate(context.Background(), "rate:"+key, time.Second)
+		if err == nil {
+			return count <= int64(rps)
+		}
 	}
 	burst := s.burst
 	if burst < rps {
@@ -301,6 +349,10 @@ func (s *Service) AllowRate(key string, rps int) bool {
 // TokenCacheKey формирует ключ Redis или кэша в памяти для необработанного токена.
 func TokenCacheKey(tokenStr string) string {
 	return "auth:token:" + hashToken(tokenStr)
+}
+
+func revokedTokenKey(tokenStr string) string {
+	return "auth:revoked:" + hashToken(tokenStr)
 }
 
 func hashToken(t string) string {
