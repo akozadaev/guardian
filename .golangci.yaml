@@ -5,13 +5,6 @@ run:
   tests: true
   concurrency: 4
 
-issues:
-  exclude-files:
-    - ".*.gen.go"
-    - ".*_test.go"
-  exclude-dirs:
-    - "migrations"
-
 output:
   formats:
     text:
@@ -25,22 +18,20 @@ linters:
     - errcheck
     - staticcheck
     - unused
-    #    - structcheck
-    #    - deadcode
     - gocritic
-    #    - goimports
     - bodyclose
-  #    - exportloopref
   disable:
-    #    - scopelint
-    #    - golint
-    #    - varcheck
     - depguard
-
-linters-settings:
-  revive:
-    severity: warning
-    rules:
-      - name: indent-error-flow
-      - name: var-naming
-        arguments: [ [ "API", "ASCII", "CPU", "CSS", "DNS", "EOF", "GUID", "HTML", "HTTP", "HTTPS", "ID", "IP", "JSON", "QPS", "RAM", "RPC", "SLA", "SMTP", "SQL", "SSH", "TCP", "TLS", "TTL", "UDP", "UI", "UID", "UUID", "URI", "URL", "UTF8", "VM", "XML", "XSRF", "XSS" ] ]
+  settings:
+    revive:
+      severity: warning
+      rules:
+        - name: indent-error-flow
+        - name: var-naming
+          arguments:
+            - [ "API", "ASCII", "CPU", "CSS", "DNS", "EOF", "GUID", "HTML", "HTTP", "HTTPS", "ID", "IP", "JSON", "QPS", "RAM", "RPC", "SLA", "SMTP", "SQL", "SSH", "TCP", "TLS", "TTL", "UDP", "UI", "UID", "UUID", "URI", "URL", "UTF8", "VM", "XML", "XSRF", "XSS" ]
+  exclusions:
+    paths:
+      - ".*\\.gen\\.go$"
+      - ".*_test\\.go$"
+      - migrations/
