@@ -64,5 +64,5 @@ hey-install:
 	go install github.com/rakyll/hey@latest
 
 load-test:
-	@echo "Example: hey -n 100000 -c 200 -m GET http://127.0.0.1:8080/http://example.com/"
-	hey -n 10000 -c 100 http://127.0.0.1:8080/http://example.com/ || true
+	@echo "Example: hey -n 100000 -c 200 -x http://127.0.0.1:8080 http://example.com/"
+	hey -n 10000 -c 100 -x http://127.0.0.1:8080 http://example.com/
