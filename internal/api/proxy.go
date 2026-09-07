@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/akozadaev/guardian/internal/auth"
@@ -110,7 +111,7 @@ func (h *Handler) ProxyHandler(ctx *fasthttp.RequestCtx) {
 
 	cacheKey := ""
 	if h.ResponseCacheOn && method == fasthttp.MethodGet && tc == nil &&
-		len(ctx.Request.Header.Cookie("session")) == 0 &&
+		len(ctx.Request.Header.Peek("Cookie")) == 0 &&
 		len(ctx.Request.Header.Peek("Authorization")) == 0 {
 		cacheKey = responseCacheKey(string(ctx.Host()), string(ctx.RequestURI()))
 		if cached, ok := h.Cache.GetResponse(context.Background(), cacheKey); ok {
@@ -170,46 +171,40 @@ type cachedResponse struct {
 }
 
 func isCacheableResponse(resp *fasthttp.Response) bool {
-	cc := string(resp.Header.Peek("Cache-Control"))
-	if cc == "" {
-		return true
+	// Ответ устанавливает cookie - общий кэш запрещён.
+	if len(resp.Header.Peek("Set-Cookie")) > 0 {
+		return false
 	}
-	// Пропускаем приватные ответы и ответы с no-store.
-	for _, p := range []string{"no-store", "private", "no-cache"} {
-		if containsFold(cc, p) {
+
+	// Пока Vary не входит в ключ кэша, такие ответы кэшировать нельзя.
+	if len(resp.Header.Peek("Vary")) > 0 {
+		return false
+	}
+
+	cacheControl := string(resp.Header.Peek("Cache-Control"))
+
+	hasPublic := false
+
+	for _, part := range strings.Split(cacheControl, ",") {
+		directive := strings.TrimSpace(part)
+
+		// Например: max-age=60 → max-age
+		if name, _, found := strings.Cut(directive, "="); found {
+			directive = strings.TrimSpace(name)
+		}
+
+		switch {
+		case strings.EqualFold(directive, "public"):
+			hasPublic = true
+
+		case strings.EqualFold(directive, "private"),
+			strings.EqualFold(directive, "no-store"),
+			strings.EqualFold(directive, "no-cache"):
 			return false
 		}
 	}
-	return true
-}
 
-func containsFold(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub ||
-		len(s) > 0 && (indexFold(s, sub) >= 0))
-}
-
-func indexFold(s, sub string) int {
-	sl, subl := []byte(s), []byte(sub)
-	for i := 0; i+len(subl) <= len(sl); i++ {
-		ok := true
-		for j := 0; j < len(subl); j++ {
-			a, b := sl[i+j], subl[j]
-			if a >= 'A' && a <= 'Z' {
-				a += 'a' - 'A'
-			}
-			if b >= 'A' && b <= 'Z' {
-				b += 'a' - 'A'
-			}
-			if a != b {
-				ok = false
-				break
-			}
-		}
-		if ok {
-			return i
-		}
-	}
-	return -1
+	return hasPublic
 }
 
 func (h *Handler) block(ctx *fasthttp.RequestCtx, res filter.Result, start time.Time, method string, reqID uuid.UUID, tc *models.TokenClaims) {
