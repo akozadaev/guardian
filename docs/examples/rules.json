@@ -1,0 +1,30 @@
+[
+  {
+    "name": "Block malicious IPs on write methods",
+    "priority": 100,
+    "enabled": true,
+    "conditions": {
+      "operator": "AND",
+      "rules": [
+        {"field": "ip", "operator": "in", "value": ["1.2.3.4", "5.6.7.8"]},
+        {"field": "method", "operator": "in", "value": ["POST", "PUT", "DELETE"]}
+      ]
+    },
+    "action": "block",
+    "response": {"status": 403, "body": "Access denied"}
+  },
+  {
+    "name": "Block admin paths for guests",
+    "priority": 50,
+    "enabled": true,
+    "conditions": {
+      "operator": "AND",
+      "rules": [
+        {"field": "path", "operator": "regex", "value": "^/admin/.*"},
+        {"field": "role", "operator": "eq", "value": "guest"}
+      ]
+    },
+    "action": "block",
+    "response": {"status": 403, "body": "Admin area forbidden"}
+  }
+]
