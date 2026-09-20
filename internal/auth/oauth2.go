@@ -52,14 +52,27 @@ func (v *OAuth2Validator) ValidateToken(ctx context.Context, token string) (*mod
 
 func (v *OAuth2Validator) introspect(ctx context.Context, token string) (*models.TokenClaims, error) {
 	form := url.Values{"token": {token}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.introspectURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := v.client.Do(req)
+	resp, err := v.doIntrospection(ctx, strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
 	if err != nil {
 		return nil, fmt.Errorf("oauth2 introspection: %w", err)
+	}
+
+	// RFC 7662 использует application/x-www-form-urlencoded. go_oauth2_server
+	// принимает JSON, поэтому повторяем только запросы, которые он отверг как
+	// неподдерживаемый формат, не скрывая ошибки авторизации и сервера.
+	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnsupportedMediaType {
+		_ = resp.Body.Close()
+		body, marshalErr := json.Marshal(map[string]string{
+			"token":           token,
+			"token_type_hint": "access_token",
+		})
+		if marshalErr != nil {
+			return nil, fmt.Errorf("encode JSON introspection request: %w", marshalErr)
+		}
+		resp, err = v.doIntrospection(ctx, strings.NewReader(string(body)), "application/json")
+		if err != nil {
+			return nil, fmt.Errorf("oauth2 JSON introspection: %w", err)
+		}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
@@ -73,6 +86,15 @@ func (v *OAuth2Validator) introspect(ctx context.Context, token string) (*models
 		return nil, fmt.Errorf("inactive token")
 	}
 	return tokenClaimsFromMap(data)
+}
+
+func (v *OAuth2Validator) doIntrospection(ctx context.Context, body *strings.Reader, contentType string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.introspectURL, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	return v.client.Do(req)
 }
 
 func (v *OAuth2Validator) validateJWKS(ctx context.Context, token string) (*models.TokenClaims, error) {
@@ -180,7 +202,10 @@ func tokenClaimsFromMap(data map[string]any) (*models.TokenClaims, error) {
 		return nil, fmt.Errorf("invalid user_id in OAuth2 token")
 	}
 	email, _ := data["email"].(string)
-	role, _ := data["role"].(string)
+	role, err := roleFromClaims(data)
+	if err != nil {
+		return nil, err
+	}
 	active := true
 	if value, ok := data["active"].(bool); ok {
 		active = value
@@ -192,5 +217,79 @@ func tokenClaimsFromMap(data map[string]any) (*models.TokenClaims, error) {
 	if value, ok := data["quota_rps"].(float64); ok {
 		quota = int(value)
 	}
-	return &models.TokenClaims{UserID: id, Email: email, Role: models.Role(role), Active: active, QuotaRPS: quota}, nil
+	return &models.TokenClaims{UserID: id, Email: email, Role: role, Active: active, QuotaRPS: quota}, nil
+}
+
+func roleFromClaims(data map[string]any) (models.Role, error) {
+	if value, ok := data["role"].(string); ok && value != "" {
+		if role, ok := guardianRole(value); ok {
+			return role, nil
+		}
+	}
+
+	// go_oauth2_server возвращает роли в массиве roles. Выбираем наиболее
+	// привилегированную известную роль независимо от порядка элементов.
+	best := models.Role("")
+	bestRank := 0
+	for _, value := range stringSliceClaim(data["roles"]) {
+		role, ok := guardianRole(value)
+		if !ok {
+			continue
+		}
+		rank := roleRank(role)
+		if rank > bestRank {
+			best, bestRank = role, rank
+		}
+	}
+	if best == "" {
+		return "", fmt.Errorf("OAuth2 token has no recognized Guardian role")
+	}
+	return best, nil
+}
+
+func guardianRole(value string) (models.Role, bool) {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "ADMIN", "ROLE_ADMIN", "ROLE_SUPER_ADMIN":
+		return models.RoleAdmin, true
+	case "MODERATOR", "ROLE_EDITOR":
+		return models.RoleModerator, true
+	case "USER", "ROLE_USER":
+		return models.RoleUser, true
+	case "GUEST", "ROLE_GUEST":
+		return models.RoleGuest, true
+	default:
+		return "", false
+	}
+}
+
+func stringSliceClaim(value any) []string {
+	switch values := value.(type) {
+	case []string:
+		return values
+	case []any:
+		out := make([]string, 0, len(values))
+		for _, item := range values {
+			if value, ok := item.(string); ok {
+				out = append(out, value)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func roleRank(role models.Role) int {
+	switch role {
+	case models.RoleAdmin:
+		return 4
+	case models.RoleModerator:
+		return 3
+	case models.RoleUser:
+		return 2
+	case models.RoleGuest:
+		return 1
+	default:
+		return 0
+	}
 }
