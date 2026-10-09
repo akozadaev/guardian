@@ -129,9 +129,21 @@ curl -x http://127.0.0.1:8080 http://example.com/
 | X-Forwarded-For | Учитывается только от `server.trusted_proxies` |
 | Authorization | Не проксируется на upstream |
 | Response cache | Выключен по умолчанию; кэшируются только анонимные GET без `Cookie` и `Authorization`, если ответ содержит `Cache-Control: public` и не содержит `Set-Cookie` или `Vary` |
-| Request logs в PG | `log.persist_requests: false` по умолчанию (hot path) |
+| Request logs в PostgreSQL (в таблицу request_logs) | `log.persist_requests: false` по умолчанию (hot path) |
 
 ## Конфигурация
 
-`configs/config.yaml` + env `GUARDIAN_*`
+`configs/config.yaml` + env `GUARDIAN_*` (точки заменяем на `_`).
+
 Примеры: `configs/config.local.env.example`.
+
+## Документация
+
+- Инструкция: `docs/instruction.md`
+- Цели и задачи (введение): `docs/about.md`
+- C4-модель: `docs/c4.md`
+- OpenAPI: `docs/openapi.yaml`
+- Архитектура: `docs/architecture.md`
+- Админ: `docs/admin-guide.md`
+- ТЗ: `doc/task.md`
+- Deploy: `compose.yaml`, `deploy/k8s/`, `deploy/haproxy/`
