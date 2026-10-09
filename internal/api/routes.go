@@ -81,8 +81,8 @@ type ConditionNodeSchema struct {
 type RuleSchema struct {
 	ID         uuid.UUID            `json:"id" format:"uuid"`
 	Name       string               `json:"name" required:"true"`
-	Priority   int                  `json:"priority" required:"true"`
-	Enabled    bool                 `json:"enabled" required:"true"`
+	Priority   int                  `json:"priority"`
+	Enabled    bool                 `json:"enabled"`
 	Conditions ConditionNodeSchema  `json:"conditions" required:"true"`
 	Action     string               `json:"action" required:"true" enum:"allow,block,modify"`
 	Response   *models.RuleResponse `json:"response,omitempty"`
@@ -90,6 +90,15 @@ type RuleSchema struct {
 	CreatedBy  *uuid.UUID           `json:"created_by,omitempty" format:"uuid"`
 	CreatedAt  time.Time            `json:"created_at" format:"date-time"`
 	UpdatedAt  time.Time            `json:"updated_at" format:"date-time"`
+}
+
+// UserCreateSchema описывает обязательные поля запроса создания пользователя.
+type UserCreateSchema struct {
+	ID       uuid.UUID `json:"id" format:"uuid"`
+	Email    string    `json:"email" required:"true"`
+	Role     string    `json:"role" required:"true"`
+	Active   bool      `json:"active"`
+	QuotaRPS int       `json:"quota_rps"`
 }
 
 // RulePageResponse описывает страницу правил.
@@ -133,6 +142,7 @@ var adminRoutes = []Route{
 	},
 	{
 		Method: http.MethodGet, Path: "/ready", Summary: "Проверка готовности",
+		Description: "Внутренний флаг запуска/остановки; текущая доступность PostgreSQL, Redis и IdP не проверяется.",
 		Responses: []RouteResponse{
 			{Status: 200, Description: "Сервис готов", Body: StatusResponse{}},
 			{Status: 503, Description: "Сервис не готов", Body: errorBody},
@@ -141,7 +151,7 @@ var adminRoutes = []Route{
 	},
 	{
 		Method: http.MethodPost, Path: "/api/v1/auth/token", Summary: "Выпуск JWT для разработки",
-		Description: "Доступен только при настроенном auth.bootstrap_token.",
+		Description: "Включается auth.bootstrap_token независимо от среды запуска. Выдаёт локальный JWT HS256 существующему активному пользователю на 24 часа. При внешнем валидаторе локальная проверка HS256 не используется.",
 		Parameters:  []RouteParameter{{Name: "X-Bootstrap-Token", In: "header", Required: true, Type: "string"}},
 		RequestBody: TokenRequest{},
 		Responses: []RouteResponse{
@@ -155,6 +165,7 @@ var adminRoutes = []Route{
 	},
 	{
 		Method: http.MethodPost, Path: "/api/v1/auth/logout", Summary: "Отзыв текущего JWT", Security: true,
+		Description: "Помечает предъявленный токен как отозванный в Guardian на 24 часа. Не отзывает токен у IdP; без общего Redis отметка действует на текущем экземпляре.",
 		Responses: []RouteResponse{
 			{Status: 204, Description: "Токен отозван"},
 			{Status: 401, Description: "Токен отсутствует или недействителен", Body: errorBody},
@@ -163,6 +174,7 @@ var adminRoutes = []Route{
 	},
 	{
 		Method: http.MethodGet, Path: "/api/v1/rules", Summary: "Список правил", Security: true,
+		Description: "Страница правил по убыванию priority. page по умолчанию 1, limit по умолчанию 20. Используйте limit от 1 до 100: для больших значений расчёт OFFSET и LIMIT в текущей реализации расходится. Чтение может идти через read replica.",
 		Parameters: []RouteParameter{
 			{Name: "page", In: "query", Type: "integer"},
 			{Name: "limit", In: "query", Type: "integer"},
@@ -172,6 +184,7 @@ var adminRoutes = []Route{
 	},
 	{
 		Method: http.MethodPost, Path: "/api/v1/rules", Summary: "Создание правила", Security: true,
+		Description: "Создаёт одно правило. priority по умолчанию 0, enabled по умолчанию false. Правила относятся только к прокси-трафику; HTTPS внутри CONNECT не анализируется. После записи выполняется перезагрузка правил на текущем экземпляре.",
 		RequestBody: RuleSchema{},
 		Responses:   []RouteResponse{{Status: 201, Description: "Правило создано", Body: RuleSchema{}}},
 		handler:     func(h *Handler, ctx *fasthttp.RequestCtx) { h.createRule(ctx) },
@@ -184,7 +197,8 @@ var adminRoutes = []Route{
 	},
 	{
 		Method: http.MethodPut, Path: "/api/v1/rules/{id}", Summary: "Изменение правила", Security: true,
-		Parameters: []RouteParameter{idParameter}, RequestBody: RuleSchema{},
+		Description: "Заменяет редактируемые поля правила; пропущенные поля обнуляются. После записи выполняется перезагрузка правил на текущем экземпляре. Другие экземпляры обновляются периодически.",
+		Parameters:  []RouteParameter{idParameter}, RequestBody: RuleSchema{},
 		Responses: []RouteResponse{{Status: 200, Description: "Правило изменено", Body: RuleSchema{}}, {Status: 404, Description: "Правило не найдено", Body: errorBody}},
 		handler:   func(h *Handler, ctx *fasthttp.RequestCtx) { h.updateRule(ctx) },
 	},
@@ -196,53 +210,62 @@ var adminRoutes = []Route{
 	},
 	{
 		Method: http.MethodPost, Path: "/api/v1/rules/{id}/test", Summary: "Проверка правила", Security: true,
-		Parameters: []RouteParameter{idParameter}, RequestBody: models.RequestContext{},
+		Description: "Проверяет переданный контекст без проксирования. body — Base64-строка; body_size и остальные поля задаются независимо. Возвращает matched и action.",
+		Parameters:  []RouteParameter{idParameter}, RequestBody: models.RequestContext{},
 		Responses: []RouteResponse{{Status: 200, Description: "Результат проверки", Body: RuleTestResponse{}}, {Status: 404, Description: "Правило не найдено", Body: errorBody}},
 		handler:   func(h *Handler, ctx *fasthttp.RequestCtx) { h.testRule(ctx) },
 	},
 	{
 		Method: http.MethodGet, Path: "/api/v1/users", Summary: "Список пользователей", Security: true,
-		Parameters: []RouteParameter{{Name: "page", In: "query", Type: "integer"}, {Name: "limit", In: "query", Type: "integer"}},
-		Responses:  []RouteResponse{{Status: 200, Description: "Страница пользователей", Body: models.PageResult[models.User]{}}},
-		handler:    func(h *Handler, ctx *fasthttp.RequestCtx) { h.listUsers(ctx) },
+		Description: "Страница пользователей. page по умолчанию 1, limit по умолчанию 20. Используйте limit от 1 до 100: для больших значений расчёт OFFSET и LIMIT в текущей реализации расходится. Чтение может идти через read replica.",
+		Parameters:  []RouteParameter{{Name: "page", In: "query", Type: "integer"}, {Name: "limit", In: "query", Type: "integer"}},
+		Responses:   []RouteResponse{{Status: 200, Description: "Страница пользователей", Body: models.PageResult[models.User]{}}},
+		handler:     func(h *Handler, ctx *fasthttp.RequestCtx) { h.listUsers(ctx) },
 	},
 	{
 		Method: http.MethodPost, Path: "/api/v1/users", Summary: "Создание пользователя", Security: true,
-		RequestBody: models.User{}, Responses: []RouteResponse{{Status: 201, Description: "Пользователь создан", Body: models.User{}}},
+		Description: "Обязательны email и role. active принудительно true; нулевая quota_rps заменяется на 1000. Роли Guardian: admin, moderator, user, guest.",
+		RequestBody: UserCreateSchema{}, Responses: []RouteResponse{{Status: 201, Description: "Пользователь создан", Body: models.User{}}},
 		handler: func(h *Handler, ctx *fasthttp.RequestCtx) { h.createUser(ctx) },
 	},
 	{
 		Method: http.MethodGet, Path: "/api/v1/users/{id}", Summary: "Получение пользователя", Security: true,
-		Parameters: []RouteParameter{idParameter},
-		Responses:  []RouteResponse{{Status: 200, Description: "Пользователь", Body: models.User{}}, {Status: 404, Description: "Пользователь не найден", Body: errorBody}},
-		handler:    func(h *Handler, ctx *fasthttp.RequestCtx) { h.getUser(ctx) },
+		Description: "Читает пользователя из PostgreSQL, возможно через read replica. Это не обновляет claims выданных токенов.",
+		Parameters:  []RouteParameter{idParameter},
+		Responses:   []RouteResponse{{Status: 200, Description: "Пользователь", Body: models.User{}}, {Status: 404, Description: "Пользователь не найден", Body: errorBody}},
+		handler:     func(h *Handler, ctx *fasthttp.RequestCtx) { h.getUser(ctx) },
 	},
 	{
 		Method: http.MethodPut, Path: "/api/v1/users/{id}", Summary: "Изменение пользователя", Security: true,
-		Parameters: []RouteParameter{idParameter}, RequestBody: models.User{},
+		Description: "Заменяет поля пользователя; пропущенные поля обнуляются. Override активности сразу удаляется из кэша. Изменение active, role или quota_rps не обновляет ранее выданные токены.",
+		Parameters:  []RouteParameter{idParameter}, RequestBody: models.User{},
 		Responses: []RouteResponse{{Status: 200, Description: "Пользователь изменён", Body: models.User{}}, {Status: 404, Description: "Пользователь не найден", Body: errorBody}},
 		handler:   func(h *Handler, ctx *fasthttp.RequestCtx) { h.updateUser(ctx) },
 	},
 	{
 		Method: http.MethodDelete, Path: "/api/v1/users/{id}", Summary: "Удаление пользователя", Security: true,
-		Parameters: []RouteParameter{idParameter},
-		Responses:  []RouteResponse{{Status: 204, Description: "Пользователь удалён"}, {Status: 404, Description: "Пользователь не найден", Body: errorBody}},
-		handler:    func(h *Handler, ctx *fasthttp.RequestCtx) { h.deleteUser(ctx) },
+		Description: "Удаляет запись пользователя в БД. Ранее выданные токены при этом не отзываются.",
+		Parameters:  []RouteParameter{idParameter},
+		Responses:   []RouteResponse{{Status: 204, Description: "Пользователь удалён"}, {Status: 404, Description: "Пользователь не найден", Body: errorBody}},
+		handler:     func(h *Handler, ctx *fasthttp.RequestCtx) { h.deleteUser(ctx) },
 	},
 	{
 		Method: http.MethodGet, Path: "/api/v1/stats", Summary: "Общая статистика", Security: true,
-		Responses: []RouteResponse{{Status: 200, Description: "Статистика", Body: models.Stats{}}},
-		handler:   func(h *Handler, ctx *fasthttp.RequestCtx) { h.stats(ctx) },
+		Description: "Метрики текущего экземпляра процесса; сбрасываются при перезапуске. blocked_requests учитывает блокировки правилами; by_method и by_status сейчас возвращаются null.",
+		Responses:   []RouteResponse{{Status: 200, Description: "Статистика", Body: models.Stats{}}},
+		handler:     func(h *Handler, ctx *fasthttp.RequestCtx) { h.stats(ctx) },
 	},
 	{
 		Method: http.MethodGet, Path: "/api/v1/stats/rules", Summary: "Статистика по правилам", Security: true,
-		Responses: []RouteResponse{{Status: 200, Description: "Статистика по правилам", Body: []RuleStat{}}},
-		handler:   func(h *Handler, ctx *fasthttp.RequestCtx) { h.statsRules(ctx) },
+		Description: "До 100 правил по числу записанных request_logs, включая совпадения allow/block/modify. Требует log.persist_requests для новых записей. Кэш-попадания и ранние auth/rate limit отказы не записываются. Чтение возможно через read replica.",
+		Responses:   []RouteResponse{{Status: 200, Description: "Статистика по правилам", Body: []RuleStat{}}},
+		handler:     func(h *Handler, ctx *fasthttp.RequestCtx) { h.statsRules(ctx) },
 	},
 	{
 		Method: http.MethodGet, Path: "/api/v1/stats/users", Summary: "Статистика по пользователям", Security: true,
-		Responses: []RouteResponse{{Status: 200, Description: "Статистика по пользователям", Body: []UserStat{}}},
-		handler:   func(h *Handler, ctx *fasthttp.RequestCtx) { h.statsUsers(ctx) },
+		Description: "До 100 пользователей по числу request_logs с user_id. Требует log.persist_requests для новых записей. Анонимные запросы, кэш-попадания и ранние auth/rate limit отказы не учитываются. Чтение возможно через read replica.",
+		Responses:   []RouteResponse{{Status: 200, Description: "Статистика по пользователям", Body: []UserStat{}}},
+		handler:     func(h *Handler, ctx *fasthttp.RequestCtx) { h.statsUsers(ctx) },
 	},
 }
 

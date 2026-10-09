@@ -22,9 +22,9 @@ func Generate() ([]byte, error) {
 	spec := reflector.SpecEns()
 	spec.SetTitle("Guardian Proxy Admin API")
 	spec.SetVersion("1.0.0")
-	spec.SetDescription("Административный API высокопроизводительного фильтрующего прокси-сервера Guardian.")
+	spec.SetDescription("Административный API HTTP-прокси Guardian с поддержкой CONNECT. Порты по умолчанию: Admin API :8081, прокси :8080, метрики :9090. HTTPS внутри CONNECT не расшифровывается. Ограничения реализации описаны в docs/instruction.md и docs/architecture.md.")
 	spec.WithServers(openapi3.Server{URL: "/"})
-	spec.SetHTTPBearerTokenSecurity(securityName, "JWT", "JWT административного API")
+	spec.SetHTTPBearerTokenSecurity(securityName, "JWT or opaque token", "Локальный JWT HS256 либо внешний токен через JWKS/introspection, в зависимости от auth.oauth2_enabled.")
 
 	for _, route := range api.AdminRoutes() {
 		operation, err := reflector.NewOperationContext(route.Method, route.Path)
@@ -39,7 +39,16 @@ func Generate() ([]byte, error) {
 		if route.Security {
 			operation.AddSecurity(securityName)
 			addResponse(operation, 401, "Требуется аутентификация", api.ErrorResponse{})
-			addResponse(operation, 403, "Недостаточно прав", api.ErrorResponse{})
+			if route.Path != "/api/v1/auth/logout" {
+				addResponse(operation, 403, "Недостаточно прав", api.ErrorResponse{})
+			}
+		}
+
+		if strings.Contains(route.Path, "{id}") || (route.RequestBody != nil && route.Path != "/api/v1/auth/token") {
+			addResponse(operation, 400, "Некорректный UUID, JSON или данные запроса", api.ErrorResponse{})
+		}
+		if route.Security && route.Path != "/api/v1/stats" && !strings.HasSuffix(route.Path, "/test") {
+			addResponse(operation, 500, "Ошибка хранилища или отзыва токена", api.ErrorResponse{})
 		}
 
 		if route.RequestBody != nil {
