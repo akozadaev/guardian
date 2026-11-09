@@ -326,7 +326,7 @@ paths:
       summary: Изменение правила
   /api/v1/rules/{id}/test:
     post:
-      description: Проверяет переданный контекст без проксирования. body - Base64-строка;
+      description: Проверяет переданный контекст без проксирования. body — Base64-строка;
         body_size и остальные поля задаются независимо. Возвращает matched и action.
       operationId: post_api_v1_rules_id_test
       parameters:

@@ -54,7 +54,6 @@ cache:
   enabled: true
   rules_ttl: 30s
   response_ttl: 60s
-  auth_ttl: 10m
   # По умолчанию выключено - включайте только для анонимных кэшируемых GET-запросов
   response_enabled: false
 
@@ -63,6 +62,7 @@ queue:
   backend: "none"
   brokers: "localhost:9092"
   topic: "guardian-events"
+  # Publisher не входит в consumer group; значение используется как Kafka client ID.
   group_id: "guardian"
 
 rate_limit:
